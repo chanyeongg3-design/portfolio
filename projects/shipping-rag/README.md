@@ -78,6 +78,47 @@
 
 처리 시간: 리랭킹이 검색 시간의 대부분을 차지했습니다. GPU에서 질문당 약 1.3초, CPU(api 기본 실행 환경)에서는 질문당 8 ~ 17초였습니다.
 
+### k 선택: 최종 k=10 (근거의 범위 구분)
+
+여기서 k는 검색이 **최종 반환하는 상위 청크 수**입니다. Recall@k는 문항별 근거 그룹 충족 비율의 평균이며, 답변 정확도가 아닙니다.
+
+**Hybrid + Rerank, page 기준 (채점 56문항, 보고서 3.1절)**
+
+| 지표 | k=5 | k=10 | k=20 |
+|---|---:|---:|---:|
+| Hit@k | 0.964 | 0.982 | 0.982 |
+| Recall@k | 0.676 | 0.765 | 0.808 |
+| 모든 근거 그룹을 찾은 문항 | 20개 | 27개 | 32개 |
+| k=10 대비 증가 (Recall / 문항 수) | | | +0.043 / +5개 |
+
+#### 확인된 사실
+
+- 위 표의 수치(보고서 3.1절). 증분은 표에서 계산한 값입니다. page Hit@k는 k=10(0.982)과 k=20(0.982)이 같아 **k=10에서 사실상 포화**했고, Recall은 k=20까지 계속 올랐습니다(k=5 → 10: +0.089, k=10 → 20: +0.043).
+- 리랭킹 후보는 k와 관계없이 항상 50개입니다. 그래서 k를 바꿔도 리랭킹 시간은 거의 같았습니다(보고서 6장). **k=20이 k=10보다 리랭킹을 두 배 수행하는 구조가 아닙니다.**
+- 백엔드 코드의 답변 생성 기본 검색 개수는 10이고, 주석에 "팀 결정: k=10"이라고 적혀 있습니다([`qa.py#L90`](https://github.com/kant-proj3-team3/shipping_rag/blob/39a8410305e3f8ada258c8f85516bd6f2e820829/packages/backend/src/backend/qa.py#L90)). 팀 프롬프트 개선 보고서도 "검색은 hybrid_rerank, k=10"을 팀 결정으로 고정했다고 적습니다([`prompt-engineering.md`](https://github.com/kant-proj3-team3/shipping_rag/blob/39a8410305e3f8ada258c8f85516bd6f2e820829/packages/backend/report/prompt-engineering.md)).
+- 최종 선택이 k=10이라는 것은 작성자 본인의 기록(비공개 대화)으로도 확인됩니다. 이 저장소에서 공개적으로 확인할 수 있는 것은 위 팀 결정 기록입니다.
+- 백엔드는 모델에 넘길 문맥에 토큰 예산(기본 12,000토큰)을 적용하고, 예산을 넘는 첫 청크부터 낮은 순위를 모두 제외합니다([`context.py`](https://github.com/kant-proj3-team3/shipping_rag/blob/39a8410305e3f8ada258c8f85516bd6f2e820829/packages/backend/src/backend/context.py#L16)).
+
+#### 보고서의 해석
+
+- 보고서 8장은 **k=5~10을 권고**하고, "page Hit는 k=10에서 거의 포화하고, Recall은 k=20까지 오르지만 그만큼 답변 프롬프트의 토큰·비용이 늘어난다"고 설명합니다([`retrieval_quality_report.md`](https://github.com/kant-proj3-team3/shipping_rag/blob/39a8410305e3f8ada258c8f85516bd6f2e820829/packages/retrieval/report/retrieval_quality_report.md)).
+- 이 기록에 근거한 해석: **k=10에서 Hit가 거의 포화했고, k=20의 추가 근거 확보 효과(Recall +0.043, 모든 근거를 찾은 문항 +5개)와 답변 입력 토큰·비용을 절충해 k=10을 최종 선택했다.**
+- 토큰·비용과의 절충은 **보고서가 권고의 근거로 든 설명**입니다. 당시 의사결정 회의록이나 실측 비용 비교로 남아 있는 근거는 아닙니다.
+
+#### 확인되지 않은 것 (주장하지 않음)
+
+- k=10과 k=20의 **실제 답변 품질, 토큰·비용, 생성 지연을 직접 비교한 결과**는 없습니다.
+- "k=20에서 답변 혼동이나 정확도 저하가 생겨 제외했다"는 주장은 확인되지 않았습니다. 이 포트폴리오는 그렇게 쓰지 않습니다.
+- 백엔드의 문맥 예산 때문에 k=20으로 검색해도 20개가 모두 모델에 전달된다고 보장할 수 없습니다. 반대로 k=10에서 예산에 의해 제외된 청크가 실제로 있었는지도 확인하지 않았습니다.
+- 팀의 답변 평가(프롬프트 v2~v4)는 모두 k=10 조건에서만 진행했습니다. 다른 k의 답변 평가와 비교한 결과는 없습니다.
+- 2026-11-06에 이전 모델 구성으로 k=3·5·10을 평가한 별도 실험이 있었지만, 최종 평가와 모델·조건이 달라 **이 문서에서는 그 수치를 사용하지 않았고 위 표와 섞지 않았습니다.**
+- k=5 대신 10을 고른 이유로 기록된 문장은 따로 없습니다. 확인되는 것은 k=5 → 10에서 Recall이 +0.089 올랐다는 측정값입니다.
+
+#### 내 기여와의 구분
+
+- 내가 작성한 PR(#8, #10, #16, #19, #38, #43, #45)은 **검색 3종, 검색 평가기, 검색 품질 보고서**입니다. 이 보고서가 k=5·10·20의 수치와 k=5~10 권고를 제공했습니다.
+- 답변 생성 기본 k=10 설정을 구현한 백엔드 PR #46은 다른 팀원의 작업이며, 내 기여로 쓰지 않습니다. k=10 선택이 팀 결정이라는 점은 팀 코드·보고서에 기록되어 있고, 그 결정에서 내가 맡은 정확한 몫은 저장소 기록만으로는 확인되지 않아 단정하지 않습니다.
+
 ## 6. 추가 실험과 결정
 
 | 실험 | 결과 | 결정 |
@@ -93,6 +134,7 @@
 - **재현 제한**: 원본 PDF와 평가용 골든 문항 파일(`data/`)은 저장소에 공개되어 있지 않아, 이 저장소만으로 평가 전체를 재현할 수는 없습니다. 공개된 것은 코드, 보고서, 방식별·k별 평가 결과 JSON입니다.
 - **표본이 작습니다.** 채점 문항이 56개라 0.02 안팎의 차이는 우연과 구분하기 어렵습니다.
 - **Recall 상한**: 근거 그룹이 6개 이상인 문항은 k=5에서 Recall 만점이 구조적으로 어렵습니다.
+- **k 선택(k=10)은 검색 지표와 보고서의 권고에 근거한 것**이며, k=10과 k=20의 답변 품질·비용·지연을 직접 비교한 결과는 없습니다(5장 "k 선택" 참고).
 - **정답 근거가 하나뿐인 문항**(예: `IS-ADD-10`)은 같은 뜻의 다른 페이지를 찾아도 page 기준으로 0점입니다. 검색 점수는 답변 품질을 그대로 대변하지 않습니다.
 - 추가 실험(CPU·GPU 비교, BM25 토큰화)은 page 기준만 확인했고, 평가는 현재 저장소 환경(torch 2.11.0)이 아니라 torch 2.14.1 환경에서 돌렸습니다.
 
@@ -110,6 +152,8 @@
 | 리랭커 입력 한도 실험 | [`reranker_max_tokens.md`](https://github.com/kant-proj3-team3/shipping_rag/blob/39a8410305e3f8ada258c8f85516bd6f2e820829/packages/retrieval/report/reranker_max_tokens.md) |
 | BM25 토큰화 비교 | [`variants/summary.md`](https://github.com/kant-proj3-team3/shipping_rag/blob/39a8410305e3f8ada258c8f85516bd6f2e820829/packages/retrieval/report/variants/summary.md) |
 | 개선 시도 기록 | [`improvement_log.md`](https://github.com/kant-proj3-team3/shipping_rag/blob/39a8410305e3f8ada258c8f85516bd6f2e820829/packages/retrieval/report/improvement_log.md) |
+| k=10 팀 결정 기록 (백엔드 코드) | [`qa.py#L90`](https://github.com/kant-proj3-team3/shipping_rag/blob/39a8410305e3f8ada258c8f85516bd6f2e820829/packages/backend/src/backend/qa.py#L90) |
+| 문맥 토큰 예산 (백엔드 코드) | [`context.py#L16`](https://github.com/kant-proj3-team3/shipping_rag/blob/39a8410305e3f8ada258c8f85516bd6f2e820829/packages/backend/src/backend/context.py#L16) |
 | 모듈 README | [`packages/retrieval/README.md`](https://github.com/kant-proj3-team3/shipping_rag/blob/39a8410305e3f8ada258c8f85516bd6f2e820829/packages/retrieval/README.md) |
 
 **내가 작성한 PR** (작성자 `chanyeongg3-design`, 모두 `dev`에 병합됨을 확인)
